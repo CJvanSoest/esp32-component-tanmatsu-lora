@@ -7,7 +7,7 @@ dependencies:
   nicolaielectronics/esp-hosted-tanmatsu:
     rules:
       - if: target == esp32p4
-    version: ">=1.0.0"
+    version: ">=2.12.3"
   badgeteam/badge-bsp:
     version: ">=0.8.0"
 license: "MIT"

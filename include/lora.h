@@ -68,7 +68,6 @@ typedef struct {
     uint32_t type;  // lora_protocol_packet_type_t
 } __attribute__((packed)) lora_protocol_header_t;
 
-esp_err_t     lora_transaction_receive(uint8_t* packet, size_t length);
 esp_err_t     lora_init(uint32_t packet_queue_size);
 QueueHandle_t lora_get_packet_queue(void);
 

@@ -1,20 +1,12 @@
 #include "lora.h"
 #include <string.h>
 #include "esp_err.h"
+#include "esp_hosted.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "portmacro.h"
-
-#if defined(CONFIG_IDF_TARGET_ESP32P4)
-#include "esp_hosted_custom.h"
-#endif
-
-#if defined(CONFIG_BSP_TARGET_TANMATSU) || defined(CONFIG_BSP_TARGET_KONSOOL)
-#include "bsp/tanmatsu.h"
-#include "tanmatsu_coprocessor.h"
-#endif
 
 static const char TAG[] = "lora";
 
@@ -34,7 +26,7 @@ static esp_err_t lora_transaction(const uint8_t* request, size_t request_length,
     xSemaphoreTake(lora_mutex, portMAX_DELAY);
     xSemaphoreTake(lora_transaction_semaphore, 0);  // Clear semaphore
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
-    result = esp_hosted_send_custom(1, (uint8_t*)request, request_length);
+    result = esp_hosted_send_custom_data(1, (uint8_t*)request, request_length);
     if (result == ESP_OK) {
         if (xSemaphoreTake(lora_transaction_semaphore, pdMS_TO_TICKS(2000)) == pdTRUE) {  // Wait for response
             if (lora_packet_size <= max_response_length) {
@@ -56,14 +48,21 @@ static esp_err_t lora_transaction(const uint8_t* request, size_t request_length,
     return result;
 }
 
-esp_err_t lora_transaction_receive(uint8_t* packet, size_t length) {
+static void lora_transaction_receive(uint32_t msg_id, const uint8_t* packet, size_t length) {
+    if (msg_id != 1) {
+        ESP_LOGW(TAG, "Received lora message with unknown ID: %u", msg_id);
+        return;
+    }
+
     static lora_protocol_lora_packet_t lora_packet = {0};
 
     if (!lora_mutex || !lora_transaction_semaphore || !lora_packet_queue) {
-        return ESP_ERR_INVALID_STATE;
+        ESP_LOGW(TAG, "Received lora message but lora not initialized");
+        return;
     }
     if (length > sizeof(lora_packet_buffer) || length < sizeof(lora_protocol_header_t)) {
-        return ESP_ERR_INVALID_SIZE;
+        ESP_LOGW(TAG, "Received lora message but size incorrect");
+        return;
     }
     lora_protocol_header_t* header = (lora_protocol_header_t*)packet;
     if (header->type == LORA_PROTOCOL_TYPE_PACKET_RX) {
@@ -77,7 +76,6 @@ esp_err_t lora_transaction_receive(uint8_t* packet, size_t length) {
         lora_packet_size = length;
         xSemaphoreGive(lora_transaction_semaphore);
     }
-    return ESP_OK;
 }
 
 esp_err_t lora_init(uint32_t packet_queue_size) {
@@ -96,6 +94,9 @@ esp_err_t lora_init(uint32_t packet_queue_size) {
         }
         return ESP_ERR_NO_MEM;
     }
+
+    esp_hosted_register_custom_callback(1, lora_transaction_receive);
+
     return ESP_OK;
 }
 
