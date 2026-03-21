@@ -1,12 +1,15 @@
 #include "lora.h"
 #include <string.h>
 #include "esp_err.h"
-#include "esp_hosted.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "portmacro.h"
+
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "esp_hosted.h"
+#endif
 
 static const char TAG[] = "lora";
 
@@ -95,7 +98,9 @@ esp_err_t lora_init(uint32_t packet_queue_size) {
         return ESP_ERR_NO_MEM;
     }
 
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
     esp_hosted_register_custom_callback(1, lora_transaction_receive);
+#endif
 
     return ESP_OK;
 }
