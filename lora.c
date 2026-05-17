@@ -529,6 +529,34 @@ esp_err_t lora_get_mode(lora_handle_t* handle, lora_protocol_mode_t* out_mode) {
         lora_protocol_mode_params_t* params = (lora_protocol_mode_params_t*)(response + sizeof(lora_protocol_header_t));
         *out_mode                           = params->mode;
     } else {
+        uint8_t   chip_mode = 0;
+        esp_err_t res       = sx126x_get_status(&handle->driver_handle, NULL, &chip_mode);
+        if (res != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to get LoRa chip mode: %s", esp_err_to_name(res));
+            return ESP_FAIL;
+        }
+
+        switch (chip_mode) {
+            case SX126X_CHIP_MODE_STDBY_RC:
+                *out_mode = LORA_PROTOCOL_MODE_STANDBY_RC;
+                break;
+            case SX126X_CHIP_MODE_STDBY_XOSC:
+                *out_mode = LORA_PROTOCOL_MODE_STANDBY_XOSC;
+                break;
+            case SX126X_CHIP_MODE_FS:
+                *out_mode = LORA_PROTOCOL_MODE_FS;
+                break;
+            case SX126X_CHIP_MODE_TX:
+                *out_mode = LORA_PROTOCOL_MODE_TX;
+                break;
+            case SX126X_CHIP_MODE_RX:
+                *out_mode = LORA_PROTOCOL_MODE_RX;
+                break;
+            default:
+                ESP_LOGW(TAG, "Unknown LoRa chip mode: %d", chip_mode);
+                *out_mode = LORA_PROTOCOL_MODE_UNKNOWN;
+                break;
+        }
     }
     return ESP_OK;
 }
@@ -786,6 +814,38 @@ static esp_err_t lora_radio_apply_config(lora_handle_t* handle, const lora_proto
     return ESP_OK;
 }
 
+static uint32_t lora_calculate_tx_time_ms(const lora_protocol_config_params_t* config, uint8_t payload_length) {
+    if (config == NULL || config->bandwidth == 0 || config->spreading_factor < 5 || config->spreading_factor > 12) {
+        return 10000;  // Invalid configuration will yield a 10 second timeout
+    }
+
+    uint8_t  sf   = config->spreading_factor;
+    uint16_t bw   = config->bandwidth;        // kHz (7, 10, 15, 20, 31, 41, 62, 125, 250, 500)
+    uint8_t  cr   = config->coding_rate - 4;  // 1-4 representing 4/5 to 4/8
+    uint8_t  ldro = config->low_data_rate_optimization ? 1 : 0;
+    uint8_t  crc  = config->crc_enabled ? 1 : 0;
+
+    // LoRa payload symbol count (SX126x datasheet, section 6.1.4):
+    // n_payload = 8 + max(0, ceil((8*PL - 4*SF + 28 + 16*CRC) / (4*(SF - 2*LDRO))) * (CR + 4))
+    int32_t num = (int32_t)(8 * payload_length) - (int32_t)(4 * sf) + 28 + (int32_t)(16 * crc);
+    int32_t den = 4 * ((int32_t)sf - 2 * (int32_t)ldro);
+
+    uint32_t payload_symbols = 8;
+    if (num > 0 && den > 0) {
+        payload_symbols += (uint32_t)((num + den - 1) / den) * (uint32_t)(cr + 4);
+    }
+
+    // Preamble is (preamble_length + 4.25) symbols; round up to preamble_length + 5.
+    uint32_t total_symbols = (uint32_t)config->preamble_length + 5 + payload_symbols;
+
+    // Symbol duration: T_s = 2^SF / BW_kHz  (result in ms)
+    // ToA (ms) = total_symbols * 2^SF * 1000 / BW_kHz
+    // Use uint64_t to avoid overflow with large preambles or high SF.
+    uint64_t t_ms = ((uint64_t)total_symbols * ((uint64_t)1 << sf) * 1000ULL) / (uint64_t)bw;
+
+    return (t_ms > UINT32_MAX) ? UINT32_MAX : (uint32_t)t_ms;
+}
+
 esp_err_t lora_set_config(lora_handle_t* handle, const lora_protocol_config_params_t* config) {
     if (handle == NULL || config == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -990,7 +1050,9 @@ esp_err_t lora_send_packet(lora_handle_t* handle, const lora_protocol_lora_packe
         }
 
         // Wait for transmission to complete (wait for TX_DONE event)
-        if (xSemaphoreTake(handle->lora_transaction_semaphore, pdMS_TO_TICKS(10000)) != pdTRUE) {
+        uint32_t tx_time_ms = lora_calculate_tx_time_ms(&handle->lora_config, packet->length);
+        uint32_t timeout_ms = (uint32_t)((uint64_t)tx_time_ms * 5 / 4 + 500);  // 25% margin + 500 ms overhead
+        if (xSemaphoreTake(handle->lora_transaction_semaphore, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
             ESP_LOGE(TAG, "Timeout waiting for LoRa transmission to complete");
             return ESP_ERR_TIMEOUT;
         }
