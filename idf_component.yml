@@ -10,4 +10,6 @@ dependencies:
     version: ">=2.12.3"
   badgeteam/badge-bsp:
     version: ">=0.8.0"
+  nicolaielectronics/sx126x:
+    version: "^0.0.3"
 license: "MIT"

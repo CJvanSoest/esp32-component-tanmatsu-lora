@@ -2,9 +2,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "sx126x.h"
+
+// Protocol definitions for LoRa over SDIO using ESP32 running modified ESP-HOSTED
 
 #define LORA_PROTOCOL_VERSION_STRING_LENGTH 16
 
@@ -68,16 +72,41 @@ typedef struct {
     uint32_t type;  // lora_protocol_packet_type_t
 } __attribute__((packed)) lora_protocol_header_t;
 
-esp_err_t     lora_init(uint32_t packet_queue_size);
-QueueHandle_t lora_get_packet_queue(void);
+// LoRa radio handle
 
-esp_err_t lora_get_mode(lora_protocol_mode_t* out_mode);
-esp_err_t lora_set_mode(const lora_protocol_mode_t mode);
+typedef struct {
+    // Driver handle
+    sx126x_handle_t driver_handle;
 
-esp_err_t lora_get_config(lora_protocol_config_params_t* out_config);
-esp_err_t lora_set_config(const lora_protocol_config_params_t* config);
+    // Output queue
+    QueueHandle_t lora_packet_queue;
 
-esp_err_t lora_get_status(lora_protocol_status_params_t* out_status);
+    // State
+    SemaphoreHandle_t             lora_mutex;
+    SemaphoreHandle_t             lora_transaction_semaphore;
+    uint32_t                      lora_sequence_number;  // Transaction sequence number
+    lora_protocol_config_params_t lora_config;           // Only used for local radios
+    TaskHandle_t                  lora_task;
 
-esp_err_t lora_send_packet(const lora_protocol_lora_packet_t* packet);
-esp_err_t lora_receive_packet(lora_protocol_lora_packet_t* out_packet, TickType_t timeout);
+    // Single packet storage for transaction responses
+    uint8_t lora_packet_buffer[sizeof(uint32_t) + 512];
+    size_t  lora_packet_size;
+} lora_handle_t;
+
+// Functions
+
+esp_err_t     lora_init_remote(lora_handle_t* handle, uint32_t packet_queue_size);
+esp_err_t     lora_init_local(lora_handle_t* handle, uint32_t packet_queue_size, spi_host_device_t spi_host_id,
+                              gpio_num_t nss, gpio_num_t reset, gpio_num_t dio1, gpio_num_t busy);
+QueueHandle_t lora_get_packet_queue(lora_handle_t* handle);
+
+esp_err_t lora_get_mode(lora_handle_t* handle, lora_protocol_mode_t* out_mode);
+esp_err_t lora_set_mode(lora_handle_t* handle, const lora_protocol_mode_t mode);
+
+esp_err_t lora_get_config(lora_handle_t* handle, lora_protocol_config_params_t* out_config);
+esp_err_t lora_set_config(lora_handle_t* handle, const lora_protocol_config_params_t* config);
+
+esp_err_t lora_get_status(lora_handle_t* handle, lora_protocol_status_params_t* out_status);
+
+esp_err_t lora_send_packet(lora_handle_t* handle, const lora_protocol_lora_packet_t* packet);
+esp_err_t lora_receive_packet(lora_handle_t* handle, lora_protocol_lora_packet_t* out_packet, TickType_t timeout);
