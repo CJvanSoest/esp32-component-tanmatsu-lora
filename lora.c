@@ -1090,3 +1090,47 @@ esp_err_t lora_receive_packet(lora_handle_t* handle, lora_protocol_lora_packet_t
     }
     return xQueueReceive(handle->lora_packet_queue, out_packet, timeout) == pdTRUE ? ESP_OK : ESP_FAIL;
 }
+
+// Query the C6 app firmware version via GET_FW_VERSION (remote radio only).
+// On old firmware lacking the cmd the C6 replies NACK -> ESP_ERR_NOT_SUPPORTED.
+esp_err_t lora_get_fw_version(lora_handle_t* handle, char* out_version, size_t out_version_len) {
+    if (handle == NULL || out_version == NULL || out_version_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (handle != remote_handle) {
+        return ESP_ERR_NOT_SUPPORTED;  // Local radio: no remote protocol path.
+    }
+    lora_protocol_header_t request = {
+        .sequence_number = handle->lora_sequence_number,
+        .type            = LORA_PROTOCOL_TYPE_GET_FW_VERSION,
+    };
+    uint8_t   response[sizeof(lora_protocol_header_t) + sizeof(lora_protocol_fw_version_params_t)] = {0};
+    size_t    response_length = 0;
+    esp_err_t result =
+        lora_transaction(handle, (uint8_t*)&request, sizeof(request), response, &response_length, sizeof(response));
+    if (result != ESP_OK) {
+        return result;
+    }
+    lora_protocol_header_t* header = (lora_protocol_header_t*)response;
+    if (header->sequence_number != request.sequence_number) {
+        ESP_LOGE(TAG, "FW_VERSION: bad seq %u", header->sequence_number);
+        return ESP_FAIL;
+    }
+    if (header->type == LORA_PROTOCOL_TYPE_NACK) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (header->type != LORA_PROTOCOL_TYPE_GET_FW_VERSION) {
+        ESP_LOGE(TAG, "FW_VERSION: bad type %u", header->type);
+        return ESP_FAIL;
+    }
+    if (response_length < sizeof(lora_protocol_header_t) + sizeof(lora_protocol_fw_version_params_t)) {
+        return ESP_FAIL;
+    }
+    lora_protocol_fw_version_params_t* params =
+        (lora_protocol_fw_version_params_t*)(response + sizeof(lora_protocol_header_t));
+    size_t copy = out_version_len - 1;
+    if (copy > sizeof(params->version)) copy = sizeof(params->version);
+    memcpy(out_version, params->version, copy);
+    out_version[copy] = '\0';
+    return ESP_OK;
+}

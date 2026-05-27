@@ -11,17 +11,19 @@
 // Protocol definitions for LoRa over SDIO using ESP32 running modified ESP-HOSTED
 
 #define LORA_PROTOCOL_VERSION_STRING_LENGTH 16
+#define LORA_PROTOCOL_FW_VERSION_STRING_LENGTH 32
 
 typedef enum {
-    LORA_PROTOCOL_TYPE_ACK        = 0x00,
-    LORA_PROTOCOL_TYPE_NACK       = 0x01,
-    LORA_PROTOCOL_TYPE_GET_MODE   = 0x02,
-    LORA_PROTOCOL_TYPE_SET_MODE   = 0x03,
-    LORA_PROTOCOL_TYPE_GET_CONFIG = 0x04,
-    LORA_PROTOCOL_TYPE_SET_CONFIG = 0x05,
-    LORA_PROTOCOL_TYPE_GET_STATUS = 0x06,
-    LORA_PROTOCOL_TYPE_PACKET_RX  = 0x07,
-    LORA_PROTOCOL_TYPE_PACKET_TX  = 0x08,
+    LORA_PROTOCOL_TYPE_ACK            = 0x00,
+    LORA_PROTOCOL_TYPE_NACK           = 0x01,
+    LORA_PROTOCOL_TYPE_GET_MODE       = 0x02,
+    LORA_PROTOCOL_TYPE_SET_MODE       = 0x03,
+    LORA_PROTOCOL_TYPE_GET_CONFIG     = 0x04,
+    LORA_PROTOCOL_TYPE_SET_CONFIG     = 0x05,
+    LORA_PROTOCOL_TYPE_GET_STATUS     = 0x06,
+    LORA_PROTOCOL_TYPE_PACKET_RX      = 0x07,
+    LORA_PROTOCOL_TYPE_PACKET_TX      = 0x08,
+    LORA_PROTOCOL_TYPE_GET_FW_VERSION = 0x09,  // app firmware version (esp_app_desc->version)
 } lora_protocol_packet_type_t;
 
 typedef enum {
@@ -67,6 +69,11 @@ typedef struct {
     uint8_t data[256];
 } __attribute__((packed)) lora_protocol_lora_packet_t;
 
+// Response payload for GET_FW_VERSION (app firmware version from esp_app_desc).
+typedef struct {
+    char version[LORA_PROTOCOL_FW_VERSION_STRING_LENGTH];  // NUL-terminated; truncated to fit
+} __attribute__((packed)) lora_protocol_fw_version_params_t;
+
 typedef struct {
     uint32_t sequence_number;
     uint32_t type;  // lora_protocol_packet_type_t
@@ -110,3 +117,8 @@ esp_err_t lora_get_status(lora_handle_t* handle, lora_protocol_status_params_t* 
 
 esp_err_t lora_send_packet(lora_handle_t* handle, const lora_protocol_lora_packet_t* packet);
 esp_err_t lora_receive_packet(lora_handle_t* handle, lora_protocol_lora_packet_t* out_packet, TickType_t timeout);
+
+// Query the C6 app firmware version string (e.g. "v3.0.0+abc1234").
+// Writes a NUL-terminated string into out_version (up to out_version_len bytes).
+// Returns ESP_ERR_NOT_SUPPORTED if C6 firmware lacks GET_FW_VERSION.
+esp_err_t lora_get_fw_version(lora_handle_t* handle, char* out_version, size_t out_version_len);
