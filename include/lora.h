@@ -14,15 +14,15 @@
 
 typedef enum {
     LORA_PROTOCOL_TYPE_ACK           = 0x00,
-    LORA_PROTOCOL_TYPE_NACK           = 0x01,
-    LORA_PROTOCOL_TYPE_GET_MODE       = 0x02,
-    LORA_PROTOCOL_TYPE_SET_MODE       = 0x03,
-    LORA_PROTOCOL_TYPE_GET_CONFIG     = 0x04,
-    LORA_PROTOCOL_TYPE_SET_CONFIG     = 0x05,
-    LORA_PROTOCOL_TYPE_GET_STATUS     = 0x06,
-    LORA_PROTOCOL_TYPE_PACKET_RX      = 0x07,
-    LORA_PROTOCOL_TYPE_PACKET_TX      = 0x08,
-    LORA_PROTOCOL_TYPE_GET_RSSI_INST  = 0x09,
+    LORA_PROTOCOL_TYPE_NACK          = 0x01,
+    LORA_PROTOCOL_TYPE_GET_MODE      = 0x02,
+    LORA_PROTOCOL_TYPE_SET_MODE      = 0x03,
+    LORA_PROTOCOL_TYPE_GET_CONFIG    = 0x04,
+    LORA_PROTOCOL_TYPE_SET_CONFIG    = 0x05,
+    LORA_PROTOCOL_TYPE_GET_STATUS    = 0x06,
+    LORA_PROTOCOL_TYPE_PACKET_RX     = 0x07,
+    LORA_PROTOCOL_TYPE_PACKET_TX     = 0x08,
+    LORA_PROTOCOL_TYPE_GET_RSSI_INST = 0x09,
 } lora_protocol_packet_type_t;
 
 typedef enum {
@@ -77,7 +77,7 @@ typedef struct {
 } __attribute__((packed)) lora_protocol_rssi_inst_params_t;
 
 typedef struct {
-    lora_packet_stats_t stats;       // Populated for packets received over the wire.
+    lora_packet_stats_t stats;
     uint8_t             length;
     uint8_t             data[256];
 } __attribute__((packed)) lora_protocol_lora_packet_t;
@@ -126,6 +126,4 @@ esp_err_t lora_get_status(lora_handle_t* handle, lora_protocol_status_params_t* 
 esp_err_t lora_send_packet(lora_handle_t* handle, const lora_protocol_lora_packet_t* packet);
 esp_err_t lora_receive_packet(lora_handle_t* handle, lora_protocol_lora_packet_t* out_packet, TickType_t timeout);
 
-// Poll the radio for an instant RSSI sample (e.g. for noise floor measurement). Remote radios only.
-// out_rssi_raw: dBm = -out_rssi_raw/2.
-esp_err_t lora_get_rssi_inst(lora_handle_t* handle, uint8_t* out_rssi_raw);
+esp_err_t lora_get_rssi_inst(lora_handle_t* handle, float* out_rssi);

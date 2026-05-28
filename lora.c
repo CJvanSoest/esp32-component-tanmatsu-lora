@@ -327,7 +327,15 @@ static void lora_radio_read_data(lora_handle_t* handle) {
         return;
     }
     if (lora_packet.length == 0) {
-        ESP_LOGW(TAG, "No data?");
+        ESP_LOGW(TAG, "Failed to read data from LoRa radio: available data length is zero");
+        return;
+    }
+
+    res =
+        sx126x_get_packet_status_lora(&handle->driver_handle, &lora_packet.stats.rssi_pkt_raw,
+                                      (uint8_t*)&lora_packet.stats.snr_pkt_raw, &lora_packet.stats.signal_rssi_pkt_raw);
+    if (res != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read packet status from LoRa radio: %s", esp_err_to_name(res));
         return;
     }
 
@@ -337,15 +345,9 @@ static void lora_radio_read_data(lora_handle_t* handle) {
         return;
     }
 
-    printf("Packet: ");
-    for (size_t i = 0; i < lora_packet.length; i++) {
-        printf("%02X ", lora_packet.data[i]);
+    if (xQueueSend(handle->lora_packet_queue, &lora_packet, 0) != pdPASS) {
+        ESP_LOGW(TAG, "Incoming LoRa packet dropped, queue full");
     }
-    printf("\r\n");
-
-    // Local-radio path doesn't read packet status; leave stats zeroed.
-    memset(&lora_packet.stats, 0, sizeof(lora_packet.stats));
-    xQueueSend(handle->lora_packet_queue, &lora_packet, 0);
 }
 
 static void lora_radio_task(void* pvParameters) {
@@ -1108,41 +1110,44 @@ esp_err_t lora_receive_packet(lora_handle_t* handle, lora_protocol_lora_packet_t
     return xQueueReceive(handle->lora_packet_queue, out_packet, timeout) == pdTRUE ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t lora_get_rssi_inst(lora_handle_t* handle, uint8_t* out_rssi_raw) {
-    if (handle == NULL || out_rssi_raw == NULL) {
+esp_err_t lora_get_rssi_inst(lora_handle_t* handle, float* out_rssi) {
+    if (handle == NULL || out_rssi == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (handle != remote_handle) {
-        return ESP_ERR_NOT_SUPPORTED;  // Local radio: no remote protocol path.
+    if (handle == remote_handle) {
+        lora_protocol_header_t request = {
+            .sequence_number = handle->lora_sequence_number,
+            .type            = LORA_PROTOCOL_TYPE_GET_RSSI_INST,
+        };
+        uint8_t   response[sizeof(lora_protocol_header_t) + sizeof(lora_protocol_rssi_inst_params_t)] = {0};
+        size_t    response_length                                                                     = 0;
+        esp_err_t result =
+            lora_transaction(handle, (uint8_t*)&request, sizeof(request), response, &response_length, sizeof(response));
+        if (result != ESP_OK) {
+            return result;
+        }
+        lora_protocol_header_t* header = (lora_protocol_header_t*)response;
+        if (header->sequence_number != request.sequence_number) {
+            ESP_LOGE(TAG, "RSSI inst: response with unexpected sequence number %u", header->sequence_number);
+            return ESP_FAIL;
+        }
+        if (header->type == LORA_PROTOCOL_TYPE_NACK) {
+            ESP_LOGE(TAG, "RSSI inst: received error response");
+            return ESP_FAIL;
+        }
+        if (header->type != LORA_PROTOCOL_TYPE_GET_RSSI_INST) {
+            ESP_LOGE(TAG, "RSSI inst: response with unexpected type %u", header->type);
+            return ESP_FAIL;
+        }
+        if (response_length < sizeof(lora_protocol_header_t) + sizeof(lora_protocol_rssi_inst_params_t)) {
+            ESP_LOGE(TAG, "RSSI inst: response with unexpected length");
+            return ESP_FAIL;
+        }
+        lora_protocol_rssi_inst_params_t* params =
+            (lora_protocol_rssi_inst_params_t*)(response + sizeof(lora_protocol_header_t));
+        *out_rssi = (params->rssi_raw - 0.5f) / -2.0f;
+        return ESP_OK;
+    } else {
+        return sx126x_get_rssi_inst(&handle->driver_handle, out_rssi);
     }
-    lora_protocol_header_t request = {
-        .sequence_number = handle->lora_sequence_number,
-        .type            = LORA_PROTOCOL_TYPE_GET_RSSI_INST,
-    };
-    uint8_t   response[sizeof(lora_protocol_header_t) + sizeof(lora_protocol_rssi_inst_params_t)] = {0};
-    size_t    response_length = 0;
-    esp_err_t result =
-        lora_transaction(handle, (uint8_t*)&request, sizeof(request), response, &response_length, sizeof(response));
-    if (result != ESP_OK) {
-        return result;
-    }
-    lora_protocol_header_t* header = (lora_protocol_header_t*)response;
-    if (header->sequence_number != request.sequence_number) {
-        ESP_LOGE(TAG, "RSSI_INST: bad seq %u", header->sequence_number);
-        return ESP_FAIL;
-    }
-    if (header->type == LORA_PROTOCOL_TYPE_NACK) {
-        return ESP_ERR_NOT_SUPPORTED;  // Old C6 firmware lacks GET_RSSI_INST.
-    }
-    if (header->type != LORA_PROTOCOL_TYPE_GET_RSSI_INST) {
-        ESP_LOGE(TAG, "RSSI_INST: bad type %u", header->type);
-        return ESP_FAIL;
-    }
-    if (response_length < sizeof(lora_protocol_header_t) + sizeof(lora_protocol_rssi_inst_params_t)) {
-        return ESP_FAIL;
-    }
-    lora_protocol_rssi_inst_params_t* params =
-        (lora_protocol_rssi_inst_params_t*)(response + sizeof(lora_protocol_header_t));
-    *out_rssi_raw = params->rssi_raw;
-    return ESP_OK;
 }
